@@ -1,18 +1,9 @@
 import {
-  Action,
-  Contract,
-  ContractMapping, ContractState,
-  ContractValue,
-  IncomingTx,
-  JsonVar,
-  logger,
-  Param,
-  Payments,
-  Params, State,
-  Tx,
-  Var, TransferIn,
+  Action, Contract, ContractState, IncomingTx, Param, Payments, State, Tx, TransferIn,
 } from '@wavesenterprise/contract-core'
 import BN from 'bn.js'
+import {UserDebtDefault} from "./Models";
+import {GlobalDebtKey, Placeholder, UserDebtKey} from "./Constants";
 
 //TODO
 // для west 200% и ликвидация с 150%
@@ -33,72 +24,59 @@ export default class Synergy {
       @Param("amountToMint") amountToMint: BN, // Amount of rUSD to mint
       @Param("amountToPledge") amountToPledge: BN, // Amount of wETH to pledge
   ) {
-    if (amountToMint.eq(0)) {
-      throw new Error('amountToMint equals zero')
-    }
-    const userDebt = await this.state.get("user_" + tx.sender.toString() + "_debt")
-    if (userDebt === undefined) {
-      throw new Error('no user debt info')
-    }
-  }
+      // check if amountToMint is zero
+      if (amountToMint.eq(0)) {
+          throw new Error('amountToMint equals zero')
+      }
+      // get user previous deposits
+      const userDebt = await this.state.get(this.getUserDebtKey(tx))
+      if (userDebt === undefined) {
+          throw new Error('no user debt info')
+      }
+      const globalDebt = await this.getGlobalDebt()
 
-//   function mint(uint256 _amountToMint, uint256 _amountToPledge) external {
-//   UserDebt storage debt = userDebts[msg.sender];
-//
-//   require(_amountToMint != 0, "Mint amount cannot be zero");
-//
-//   uint256 globalDebt_ = globalDebt();
-//   uint256 shares_ = globalDebt_ == 0 ? 1e18 : (totalShares * _amountToMint) / globalDebt_;
-//   totalShares += shares_;
-//
-//   debt.minted += _amountToMint;
-//   debt.collateral += _amountToPledge;
-//   debt.shares += shares_;
-//
-//   uint32 collateralRatio_ = collateralRatio(msg.sender);
-//   require(collateralRatio_ >= minCollateralRatio, "Collateral ration less than minCollateralRatio");
-//
-//   wEth.transferFrom(msg.sender, address(this), _amountToPledge);
-//   synter.mintSynt(address(rUsd), msg.sender, _amountToMint);
-//
-//   emit Minted(_amountToMint, _amountToPledge);
-// }
+  }
 
   @Action
   async deposit(
       @Tx tx: IncomingTx,
       @Payments payment: TransferIn,
   ) {
+      // payment non zero
       if (payment.amount.eq(0)) {
         throw new Error("amount is zero")
       }
-      // проверка на ист или вест
-      if (!payment.assetId) {
-
-      }
+      // check west or east passed
       const eastAddress = await this.state.get("east_address")
-      if (eastAddress != payment.assetId) {
-        throw new Error("invalid east address")
+      if ((eastAddress !== payment.assetId) || (!payment.assetId)) {
+        throw new Error("invalid east or west address")
       }
-
-      let userDebt = await this.state.get("user_" + tx.sender.toString() + "_debt")
-      if (userDebt === undefined) {
-        userDebt = 0;
+      // get user previous deposits
+      let userDebt = UserDebtDefault;
+      let userDebtJson = await this.state.get(this.getUserDebtKey(tx))
+      if (userDebtJson !== undefined) {
+          userDebt = JSON.parse(<string>userDebtJson);
       }
-      this.state.set("user_" + tx.sender.toString() + "_debt", payment.amount + userDebt)
+      // set new user deposit
+      userDebt.Collateral += payment.amount;
 
+      // set to blockchain
+      userDebtJson = JSON.stringify(userDebt)
+      // this.state.set("user_" + tx.sender.toString() + "_debt", userDebtJson)
+      this.state.set(this.getUserDebtKey(tx), userDebtJson)
   }
 
-//   /**
-//    * @notice Deposit wETH to collateral to increase collateral rate and escape liquidation
-//    * @param _amount amoount of wETH to deposit
-//    */
-//   function deposit(uint256 _amount) external {
-//   UserDebt storage debt = userDebts[msg.sender];
-//
-//   debt.collateral += _amount;
-//   wEth.transferFrom(msg.sender, address(this), _amount);
-//
-//   emit Deposited(_amount);
-// }
+  async getGlobalDebt():BN {
+      // try to get global debt from blockchain
+      let globalDebt = await this.state.get(GlobalDebtKey)
+      if (globalDebt === undefined) {
+          globalDebt = 0;
+      }
+      return BN(globalDebt)
+  }
+
+  // getUserDebtKey returns string "user_{sender address}_debt"
+  getUserDebtKey(tx:IncomingTx):string {
+      return UserDebtKey.replace(Placeholder, tx.sender.toString())
+  }
 }
