@@ -116,6 +116,72 @@ export default class Synergy {
       this.setUserDebt(tx, userDebt)
   }
 
+  @Action
+  async burn(
+      @Tx tx: IncomingTx,
+      @Payments payment: TransferIn,
+  ) {
+      if (payment.amount == 0) {
+          throw new Error('amount is zero');
+      }
+      const rusdId = await this.state.get(RusdAddressKey)
+      const rusd = await Asset.new(+rusdId);
+
+      if (payment.assetId != rusd.getId()) {
+          throw new Error('invalid token');
+      }
+
+      let debt = await this.getUserDebtFromJsonWithError(tx);
+      const globalDebt = await this.getGlobalDebt();
+      let totalShares = await this.getTotalShares();
+      let userDebt = (globalDebt * debt.Shares) / totalShares;
+      let amountToBurn = userDebt >= payment.amount ? payment.amount : userDebt;
+      let sharesToBurn = (payment.amount * totalShares) / globalDebt;
+
+      // get rid of round
+      if (userDebt == payment.amount) {
+          totalShares -= debt.Shares;
+          debt.Shares = 0;
+      } else {
+          debt.Shares -= sharesToBurn;
+          totalShares -= sharesToBurn;
+      }
+
+      if (debt.Minted > amountToBurn) {
+              debt.Minted -= amountToBurn;
+      } else {
+          debt.Minted = 0;
+      }
+
+      await this.setUserDebt(tx, debt);
+      await this.state.set(TotalSharesKey, totalShares);
+      await rusd.burn(payment.amount);
+  }
+
+  @Action
+  async withdraw(
+      @Tx tx: IncomingTx,
+      @Param("amount") amount: BN, // Amount of rUSD to withdraw
+  ) {
+      if (amount == 0) {
+          throw new Error('amount is zero');
+      }
+      let debt = await this.getUserDebtFromJsonWithError(tx);
+
+      let amountToWithdraw = debt.Collateral > amount ? amount : debt.Collateral;
+      debt.Collateral -= amountToWithdraw;
+
+      let collateralRatio = await this.getCollateralRatio(tx);
+      const minCollateralRatio = await this.getMinCollateralRatio();
+      if (collateralRatio >= minCollateralRatio || collateralRatio == 0) {
+          throw new Error('Result ratio less than minCollateralRatio');
+      }
+
+      // only west
+      const west = await Asset.new(null);
+      await west.transfer(tx.sender, amount);
+  }
+
   async getCollateralRatio(tx:IncomingTx):BN {
       let userDebt = await this.getUserDebtFromJson(tx);
       let totalShares = await this.getTotalShares();
