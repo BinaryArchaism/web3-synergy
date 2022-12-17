@@ -5,7 +5,7 @@ import BN from 'bn.js'
 import UserDebt, {UserDebtDefault} from "./Models";
 import {
     GlobalDebtKey,
-    LiquidationCollateralRatioKey, LiquidationPenaltyKey,
+    LiquidationCollateralRatioKey, LiquidationPenaltyKey, MaxCollateralRatio,
     MinCollateralRatioKey, OwnerAddressKey,
     Placeholder, TotalSharesKey, TreasuryFeeKey,
     UserDebtKey
@@ -71,7 +71,11 @@ export default class Synergy {
       userDebt.Collateral += amountToPledge;
       userDebt.Shares += shares;
 
-      //TODO get collateral ratio
+      let collateralRatio = await this.getCollateralRatio(tx);
+      const minCollateralRatio = await this.getMinCollateralRatio();
+      if (collateralRatio >= minCollateralRatio) {
+          throw new Error('collateral ration less than minCollateralRatio');
+      }
 
       //TODO mint rusd and send to user
   }
@@ -117,7 +121,7 @@ export default class Synergy {
       } else if (userDebt.Collateral == 0) {
           return BN(0);
       }
-      return BN
+      return BN(MaxCollateralRatio);
   }
 
   async getGlobalDebt():BN {
@@ -127,6 +131,14 @@ export default class Synergy {
           globalDebt = 0;
       }
       return BN(globalDebt);
+  }
+
+  async getMinCollateralRatio():BN {
+      let minCollateralRatio = await this.state.get(MinCollateralRatioKey);
+      if (minCollateralRatio === undefined) {
+          minCollateralRatio = 0;
+      }
+      return BN(minCollateralRatio);
   }
 
   async getTotalShares():BN {
