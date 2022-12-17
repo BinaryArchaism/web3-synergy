@@ -5,4 +5,4 @@ deposit -> mint  +
 
 делаем что хотим -
 
-burn -> withdraw -
+burn -> withdraw +
