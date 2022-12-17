@@ -13,3 +13,5 @@ export const LiquidationPenaltyKey = "liquidation_penalty";
 export const TreasuryFeeKey = "treasury_fee";
 
 export const MaxCollateralRatio = 4_294_967_295; // max uint32
+
+export const RusdAddressKey = "rusd_address";

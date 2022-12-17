@@ -1,5 +1,5 @@
 import {
-  Action, Contract, ContractState, IncomingTx, Param, Payments, State, Tx, TransferIn,
+    Action, Contract, ContractState, IncomingTx, Param, Payments, State, Tx, TransferIn, Asset,
 } from '@wavesenterprise/contract-core'
 import BN from 'bn.js'
 import UserDebt, {UserDebtDefault} from "./Models";
@@ -7,7 +7,7 @@ import {
     GlobalDebtKey,
     LiquidationCollateralRatioKey, LiquidationPenaltyKey, MaxCollateralRatio,
     MinCollateralRatioKey, OwnerAddressKey,
-    Placeholder, TotalSharesKey, TreasuryFeeKey,
+    Placeholder, RusdAddressKey, TotalSharesKey, TreasuryFeeKey,
     UserDebtKey
 } from "./Constants";
 import {getRusdPrice, getWestPrice} from "./Oracle";
@@ -48,6 +48,15 @@ export default class Synergy {
   ) {
       await this.onlyOwner(tx)
   }
+  @Action()
+  async issueRusd(
+      @Tx tx: IncomingTx,
+  ) {
+      await this.onlyOwner(tx)
+      const rusd = await Asset.new();
+      await rusd.issue("RUSD", "RawUSD", 0, 1e8, true);
+      this.state.set(RusdAddressKey, rusd.getId());
+  }
 
   @Action()
   async mint(
@@ -77,7 +86,11 @@ export default class Synergy {
           throw new Error('collateral ration less than minCollateralRatio');
       }
 
-      //TODO mint rusd and send to user
+      // mint rusd and send to user
+      const rusdId = await this.state.get(RusdAddressKey)
+      const rusd = await Asset.new(+rusdId);
+      await rusd.reissue(<number>amountToMint, true);
+      await rusd.transfer(tx.sender.toString(), amountToMint);
   }
 
   @Action
