@@ -2,12 +2,12 @@ import {
   Action, Contract, ContractState, IncomingTx, Param, Payments, State, Tx, TransferIn,
 } from '@wavesenterprise/contract-core'
 import BN from 'bn.js'
-import {UserDebtDefault} from "./Models";
+import UserDebt, {UserDebtDefault} from "./Models";
 import {
     GlobalDebtKey,
     LiquidationCollateralRatioKey, LiquidationPenaltyKey,
     MinCollateralRatioKey, OwnerAddressKey,
-    Placeholder, TreasuryFeeKey,
+    Placeholder, TotalSharesKey, TreasuryFeeKey,
     UserDebtKey
 } from "./Constants";
 
@@ -56,16 +56,19 @@ export default class Synergy {
   ) {
       // check if amountToMint is zero
       if (amountToMint.eq(0)) {
-          throw new Error('amountToMint equals zero')
+          throw new Error('amountToMint equals zero');
       }
       // get user previous deposits
-      const userDebt = await this.state.get(this.getUserDebtKey(tx))
-      if (userDebt === undefined) {
-          throw new Error('no user debt info')
-      }
+      let userDebt = await this.getUserDebtFromJsonWithError(tx)
 
-      // get global debt
-      const globalDebt = await this.getGlobalDebt()
+      // get shares
+      const globalDebt = await this.getGlobalDebt();
+      const totalShares = await this.getTotalShares();
+      let shares = globalDebt == 0 ? 1e18 : (totalShares * amountToMint) / globalDebt;
+
+      userDebt.Minted += amountToMint;
+      userDebt.Collateral += amountToPledge;
+      userDebt.Shares += shares;
 
   }
 
@@ -84,32 +87,58 @@ export default class Synergy {
         throw new Error("invalid east or west address")
       }
       // get user previous deposits
-      let userDebt = UserDebtDefault;
-      let userDebtJson = await this.state.get(this.getUserDebtKey(tx))
-      if (userDebtJson !== undefined) {
-          userDebt = JSON.parse(<string>userDebtJson);
-      }
+     let userDebt = await this.getUserDebtFromJson(tx)
       // set new user deposit
       userDebt.Collateral += payment.amount;
 
       // set to blockchain
-      userDebtJson = JSON.stringify(userDebt)
-      // this.state.set("user_" + tx.sender.toString() + "_debt", userDebtJson)
-      this.state.set(this.getUserDebtKey(tx), userDebtJson)
+      this.setUserDebt(tx, userDebt)
   }
 
   async getGlobalDebt():BN {
       // try to get global debt from blockchain
-      let globalDebt = await this.state.get(GlobalDebtKey)
+      let globalDebt = await this.state.get(GlobalDebtKey);
       if (globalDebt === undefined) {
           globalDebt = 0;
       }
-      return BN(globalDebt)
+      return BN(globalDebt);
+  }
+
+  async getTotalShares():BN {
+      let totalShares = await this.state.get(TotalSharesKey);
+      if (totalShares === undefined) {
+          totalShares = 0;
+      }
+      return BN(totalShares);
   }
 
   // getUserDebtKey returns string "user_{sender address}_debt"
   getUserDebtKey(tx:IncomingTx):string {
-      return UserDebtKey.replace(Placeholder, tx.sender.toString())
+      return UserDebtKey.replace(Placeholder, tx.sender.toString());
+  }
+
+  // getUserDebtFromJson trying to get user debt info, returns default user debt when there is no such user
+  async getUserDebtFromJson(tx:IncomingTx):Promise<UserDebt> {
+      let userDebt = UserDebtDefault;
+      let userDebtJson = await this.state.get(this.getUserDebtKey(tx));
+      if (userDebtJson !== undefined) {
+          userDebt = JSON.parse(<string>userDebtJson);
+      }
+      return userDebt;
+  }
+
+  // getUserDebtFromJsonWithError trying to get user debt info, throw error when there is no such user
+  async getUserDebtFromJsonWithError(tx:IncomingTx):Promise<UserDebt> {
+      let userDebtJson = await this.state.get(this.getUserDebtKey(tx));
+      if (userDebtJson === undefined) {
+          throw new Error('no such user');
+      }
+      return JSON.parse(<string>userDebtJson);
+  }
+
+  // setUserDebt set user debt to blockchain as json
+  setUserDebt(tx:IncomingTx, userDebt:UserDebt):void {
+      this.state.set(this.getUserDebtKey(tx), JSON.stringify(userDebt));
   }
 
   async onlyOwner(tx:IncomingTx) {
