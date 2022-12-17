@@ -10,6 +10,7 @@ import {
     Placeholder, TotalSharesKey, TreasuryFeeKey,
     UserDebtKey
 } from "./Constants";
+import {getRusdPrice, getWestPrice} from "./Oracle";
 
 //TODO
 // для west 200% и ликвидация с 150%
@@ -70,6 +71,9 @@ export default class Synergy {
       userDebt.Collateral += amountToPledge;
       userDebt.Shares += shares;
 
+      //TODO get collateral ratio
+
+      //TODO mint rusd and send to user
   }
 
   @Action
@@ -93,6 +97,27 @@ export default class Synergy {
 
       // set to blockchain
       this.setUserDebt(tx, userDebt)
+  }
+
+  async getCollateralRatio(tx:IncomingTx):BN {
+      let userDebt = await this.getUserDebtFromJson(tx);
+      let totalShares = await this.getTotalShares();
+
+      if (totalShares == 0) {
+          return BN(0);
+      }
+      let [rusdPrice, rusdDecimals] = getRusdPrice();
+      let [westPrice, westDecimals] = getWestPrice();
+      let globalDebt = await this.getGlobalDebt();
+      let userDebtTotal = (globalDebt * userDebt.Shares) / totalShares;
+
+      if (userDebtTotal != 0) {
+          return BN(westPrice * userDebt.Collateral * 10 ** (BN.add(rusdDecimals, 8)) /
+              (rusdPrice * userDebtTotal * 10 ** westDecimals));
+      } else if (userDebt.Collateral == 0) {
+          return BN(0);
+      }
+      return BN
   }
 
   async getGlobalDebt():BN {
