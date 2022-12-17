@@ -182,8 +182,34 @@ export default class Synergy {
       await west.transfer(tx.sender, amount);
   }
 
-  async getCollateralRatio(tx:IncomingTx):BN {
-      let userDebt = await this.getUserDebtFromJson(tx);
+  @Action
+  async liquidate(
+      @Tx tx: IncomingTx,
+      @Param("userAddress") userAddress: string,
+  ) {
+      let debt = await this.getUserDebtFromJsonWithError(tx);
+      let globalDebt = await this.getGlobalDebt();
+      let totalShares = await this.getTotalShares();
+      let userDebt = (globalDebt * debt.Shares) / totalShares;
+      const liquidationCollateralRatio = await this.state.
+      let collateralRatio = await this.getCollateralRatio(undefined, userAddress);
+      if (collateralRatio < )
+  }
+
+  async getCollateralRatio(tx?:IncomingTx, userAddress?:string):BN {
+      let userDebt;
+      if (tx) {
+          userDebt = await this.getUserDebtFromJsonWithError(tx);
+      } else if (userAddress) {
+          let userDebtJson = await this.state.get(UserDebtKey.replace(Placeholder, tx.sender.toString()));
+          if (userDebtJson !== undefined) {
+              userDebt = JSON.parse(<string>userDebtJson);
+          } else {
+              throw new Error('user is undefined');
+          }
+      } else {
+          throw new Error('non tx or userAddress passed');
+      }
       let totalShares = await this.getTotalShares();
 
       if (totalShares == 0) {
