@@ -191,9 +191,56 @@ export default class Synergy {
       let globalDebt = await this.getGlobalDebt();
       let totalShares = await this.getTotalShares();
       let userDebt = (globalDebt * debt.Shares) / totalShares;
-      const liquidationCollateralRatio = await this.state.
+      const liquidationCollateralRatio = await this.state.get(LiquidationCollateralRatioKey);
       let collateralRatio = await this.getCollateralRatio(undefined, userAddress);
-      if (collateralRatio < )
+      if (collateralRatio < +liquidationCollateralRatio) {
+          throw new Error('Cannot liquidate yet');
+      }
+      const minCollateralRatio = await this.getMinCollateralRatio()
+      const liquidationPenalty = await this.state.get(LiquidationPenaltyKey)
+      const treasuryFee = await this.state.get(TreasuryFeeKey)
+
+
+      let [rUsdPrice, rUsdDecimals] = getRusdPrice();
+      let [westPrice, westDecimals] = getWestPrice();
+
+      let neededRusd = (
+          minCollateralRatio * userDebt * rUsdPrice * 10 ** westDecimals
+          - debt.Collateral * westPrice * 10 ** (8 + rUsdDecimals)
+      ) / (rUsdPrice * 10 ** westDecimals * (minCollateralRatio - (1e8 + <number>liquidationPenalty + <number>treasuryFee)));
+
+      let liquidatedWeth = (
+          neededRusd * rUsdPrice * (1e8 + <number>liquidationPenalty + <number>treasuryFee) * 10 ** westDecimals
+      ) / (westPrice * 10 ** (8 + rUsdPrice));
+
+      let liquidatorReward =
+          liquidatedWeth * (1e8 + <number>liquidationPenalty) / (1e8 + <number>liquidationPenalty + <number>treasuryFee);
+
+      let treasuryReward = liquidatedWeth * <number>treasuryFee / (1e8 + <number>liquidationPenalty + <number>treasuryFee);
+
+      let sharesToBurn = (neededRusd * totalShares) / globalDebt;
+
+      if (liquidatorReward + treasuryReward <= debt.Collateral) {
+              debt.Collateral -= liquidatorReward + treasuryReward;
+      } else {
+          debt.Collateral = 0;
+      }
+
+      if (sharesToBurn <= debt.Shares) {
+              debt.Shares -= sharesToBurn;
+              totalShares -= sharesToBurn;
+      } else {
+          totalShares -= debt.Shares;
+          debt.Shares = 0;
+      }
+
+      const rusdId = await this.state.get(RusdAddressKey)
+      const rusd = await Asset.new(+rusdId);
+      await rusd.burn(neededRusd);
+
+      const west = await Asset.new(null);
+      await west.transfer(tx.contractId, treasuryReward);
+      await west.transfer(tx.sender, liquidatorReward);
   }
 
   async getCollateralRatio(tx?:IncomingTx, userAddress?:string):BN {
