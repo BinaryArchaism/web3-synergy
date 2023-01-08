@@ -2,15 +2,15 @@ import {
     Action, Contract, ContractState, IncomingTx, Param, Payments, State, Tx, TransferIn, Asset,
 } from '@wavesenterprise/contract-core'
 import BN from 'bn.js'
-import UserDebt, {UserDebtDefault} from "./Models";
+import {SynthInfo, UserDebt, UserDebtDefault} from "./Models";
 import {
     GlobalDebtKey,
     LiquidationCollateralRatioKey, LiquidationPenaltyKey, MaxCollateralRatio,
     MinCollateralRatioKey, OwnerAddressKey,
-    Placeholder, RusdAddressKey, TotalSharesKey, TreasuryFeeKey,
+    Placeholder, RusdAddressKey, SwapFeeKey, SynthInfoKey, TotalSharesKey, TreasuryFeeKey,
     UserDebtKey
 } from "./Constants";
-import {getRusdPrice, getWestPrice} from "./Oracle";
+import {getPrice, getRusdPrice, getWestPrice} from "./Oracle";
 
 //TODO
 // для west 200% и ликвидация с 150%
@@ -241,6 +241,9 @@ export default class Synergy {
       const west = await Asset.new(null);
       await west.transfer(tx.contractId, treasuryReward);
       await west.transfer(tx.sender, liquidatorReward);
+
+      await this.setUserDebt(tx, debt);
+      this.state.set(TotalSharesKey, totalShares);
   }
 
   async getCollateralRatio(tx?:IncomingTx, userAddress?:string):BN {
@@ -339,4 +342,100 @@ export default class Synergy {
           throw new Error('method allowed only to owner')
       }
   }
+
+  // ================= SYNTH_DEX ==================
+    @Action
+    async swapFrom(
+        @Tx tx: IncomingTx,
+        @Param("toSynt") toSynth: string,
+        @Payments payment: TransferIn,
+    ) {
+        if (payment.amount == 0) {
+            throw new Error('amount is zero');
+        }
+        const rusdId = await this.state.get(RusdAddressKey)
+        const rusd = await Asset.new(+rusdId);
+
+        if (payment.assetId == rusd.getId()) {
+            throw new Error('invalid token');
+        }
+        await this.getSynthInfoRequired(payment.assetId);
+        await this.getSynthInfoRequired(toSynth);
+
+        let [fromPrice, fromDecimals] = getPrice(payment.assetId);
+        let [toPrice, toDecimals] = getPrice(toSynth);
+
+        let amountTo = (fromPrice * payment.amount * 10 ** toDecimals) / (toPrice * 10 ** fromDecimals);
+        const swapFee = this.state.get(SwapFeeKey)
+        let fee = (amountTo * Number(swapFee)) / 1e8;
+
+        const from = await Asset.from(payment.assetId);
+        await from.burn(payment.amount);
+
+        const to = await Asset.from(toSynth);
+        await to.reissue(fee + amountTo, true);
+        await to.transfer(tx.contractId, fee);
+        await to.transfer(tx.sender, amountTo);
+    }
+
+    // getSynthInfoKey returns string "synth_{synth address}_info"
+    getSynthInfoKey(address:string):string {
+        return SynthInfoKey.replace(Placeholder, address);
+    }
+
+    async getSynthInfoRequired(address: string):Promise<SynthInfo> {
+        let synthInfoJson = await this.state.get(this.getSynthInfoKey(address));
+        if (synthInfoJson === undefined) {
+            throw new Error('no such synth');
+        }
+        return JSON.parse(<string>synthInfoJson);
+    }
+
+    // OWNER FUNCS
+
+    @Action
+    async addSynt(
+        @Tx tx: IncomingTx,
+        @Param("enable_shorts") enableShorts: boolean,
+        @Param("name") name: string,
+    ) {
+        await this.onlyOwner(tx);
+        let asset = await Asset.new();
+        asset.issue(name, "synth_"+name, 0, 1e8, true);
+        let info:SynthInfo = {
+            ShortsEnabled: enableShorts, SynthId: asset.getId(), TotalShorts: 0
+        }
+        this.state.set(this.getSynthInfoKey(asset.getId()), JSON.stringify(info));
+    }
+
+    @Action
+    async removeSynt(
+        @Tx tx: IncomingTx,
+        @Param("address") address: string,
+    ) {
+        await this.onlyOwner(tx);
+        await this.getSynthInfoRequired(address);
+        this.state.storage.delete(this.getSynthInfoKey(address))
+    }
+
+    @Action
+    async changeSwapFee(
+        @Tx tx: IncomingTx,
+        @Param("fee") fee: number,
+    ) {
+        await this.onlyOwner(tx);
+        await this.state.set(SwapFeeKey, fee)
+    }
+
+    @Action
+    async changeShortsAvailability(
+        @Tx tx: IncomingTx,
+        @Param("address") address: string,
+        @Param("swap_enabled") swapEnabled: boolean,
+    ) {
+        await this.onlyOwner(tx);
+        let info:SynthInfo = await this.state.get(this.getSynthInfoKey(address));
+        info.ShortsEnabled = swapEnabled
+        this.state.set(this.getSynthInfoKey(address), JSON.stringify(info));
+    }
 }

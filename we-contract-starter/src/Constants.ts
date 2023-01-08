@@ -16,3 +16,7 @@ export const MaxCollateralRatio = 4_294_967_295; // max uint32
 
 export const RusdAddressKey = "rusd_address";
 export const WestAddressKey = "west_address";
+
+export const SynthInfoKey = "synth_$_info";
+
+export const SwapFeeKey = "swap_fee"
